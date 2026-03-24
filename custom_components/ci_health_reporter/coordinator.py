@@ -71,6 +71,12 @@ from .const import (
     DEFAULT_LOW_BATTERY_THRESHOLD,
     HEALTH_ENDPOINT_PATH,
     HTTP_TIMEOUT_SECONDS,
+    HEALTH_PENALTY_BATTERY_PER_ITEM,
+    HEALTH_PENALTY_BATTERY_MAX,
+    HEALTH_PENALTY_OFFLINE_PER_ITEM,
+    HEALTH_PENALTY_OFFLINE_MAX,
+    HEALTH_PENALTY_DISABLED_PER_ITEM,
+    HEALTH_PENALTY_DISABLED_MAX,
 )
 
 
@@ -129,6 +135,53 @@ class HealthReporterCoordinator:
         # needing it passed as an argument every call.
         self._low_battery_threshold = low_battery_threshold
 
+        # _data holds the most recently assembled payload dict.
+        # It starts empty; sensor entities read from it after each update.
+        self._data: dict = {}
+
+        # _listeners is a list of zero-argument callables registered by sensor
+        # entities. After each successful data build we call all of them so
+        # sensors can push the new state to HA without polling.
+        self._listeners: list = []
+
+    # ==========================================================================
+    # DATA PROPERTY AND LISTENER API
+    # ==========================================================================
+
+    @property
+    def data(self) -> dict:
+        """
+        Return the most recent collected payload dict.
+
+        Empty dict ({}) before the first update fires. Sensor entities check
+        for missing keys with .get() rather than assuming keys are present,
+        so the "not yet updated" state is handled gracefully.
+        """
+        return self._data
+
+    def async_add_listener(self, update_callback) -> None:
+        """
+        Register a callback to be invoked after each data refresh.
+
+        Called by sensor entities in async_added_to_hass so they can react
+        to coordinator updates without HA polling them on a separate timer.
+
+        There is intentionally no unsub mechanism here — sensor entities live
+        for the lifetime of the HA process (same as the coordinator), so
+        cleanup is never needed.
+        """
+        self._listeners.append(update_callback)
+
+    def _notify_listeners(self) -> None:
+        """
+        Call every registered listener in order.
+
+        This is called synchronously inside async_update() after self._data
+        is populated, so listeners always read fresh data.
+        """
+        for callback_fn in self._listeners:
+            callback_fn()
+
     # ==========================================================================
     # PUBLIC ENTRY POINT
     # ==========================================================================
@@ -150,7 +203,16 @@ class HealthReporterCoordinator:
         # Step 1: Build the payload dict (synchronous — just reads state machine)
         payload = self._build_payload()
 
-        # Step 2: POST it to the server (async — does network I/O)
+        # Step 2: Store the payload locally so sensor entities can read it.
+        # This happens before the HTTP POST so the HA dashboard stays current
+        # even if the external server is unreachable.
+        self._data = payload
+
+        # Step 3: Notify sensor entities that new data is available.
+        # Each registered listener calls schedule_update_ha_state() on its sensor.
+        self._notify_listeners()
+
+        # Step 4: POST to the external server (async — does network I/O)
         await self._post_payload(payload)
 
     # ==========================================================================
@@ -187,6 +249,22 @@ class HealthReporterCoordinator:
         # [item for item in list if condition] is Python's inline loop syntax.
         low_batteries = [b for b in batteries if b["low"]]
 
+        # -----------------------------------------------------------------------
+        # SYSTEM HEALTH SCORE
+        # -----------------------------------------------------------------------
+        # Compute a 0-100 score summarising overall system health.
+        # Each problem category has a per-item penalty and a cap so one bad
+        # category alone cannot zero out the score. Constants are in const.py.
+        low_count      = len(low_batteries)
+        offline_count  = len(offline)
+        disabled_count = sum(1 for a in automations if not a["enabled"])
+
+        battery_penalty  = min(low_count      * HEALTH_PENALTY_BATTERY_PER_ITEM,  HEALTH_PENALTY_BATTERY_MAX)
+        offline_penalty  = min(offline_count  * HEALTH_PENALTY_OFFLINE_PER_ITEM,  HEALTH_PENALTY_OFFLINE_MAX)
+        disabled_penalty = min(disabled_count * HEALTH_PENALTY_DISABLED_PER_ITEM, HEALTH_PENALTY_DISABLED_MAX)
+
+        system_health = max(0, min(100, 100 - battery_penalty - offline_penalty - disabled_penalty))
+
         # Assemble the final payload dict. This is what gets JSON-serialised
         # and sent to the server. Keys map directly to the README's payload schema.
         return {
@@ -202,6 +280,7 @@ class HealthReporterCoordinator:
             "automations": automations,
 
             # Summary counts for quick at-a-glance reading on the server side
+            # and for the HA dashboard sensor entities (sensor.py reads these).
             "summary": {
                 "battery_count": len(batteries),
                 "low_battery_count": len(low_batteries),
@@ -218,6 +297,10 @@ class HealthReporterCoordinator:
                 # but slightly more memory-efficient (doesn't build a temp list).
                 "automations_enabled": sum(1 for a in automations if a["enabled"]),
                 "automations_disabled": sum(1 for a in automations if not a["enabled"]),
+
+                # Computed health score — available to both the server payload
+                # and the HA sensor entity (sensor.ci_health_system_health).
+                "system_health": system_health,
             },
         }
 

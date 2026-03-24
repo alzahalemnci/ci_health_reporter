@@ -48,6 +48,7 @@ import voluptuous as vol                # Third-party schema validation library 
 from homeassistant.const import EVENT_HOMEASSISTANT_STOP  # HA event fired on shutdown
 from homeassistant.core import HomeAssistant              # The main HA object — contains everything
 from homeassistant.helpers import config_validation as cv # HA's pre-built voluptuous validators
+from homeassistant.helpers.discovery import async_load_platform  # Loads a sub-platform (e.g. sensor)
 from homeassistant.helpers.event import async_track_time_interval  # Schedules repeating callbacks
 from homeassistant.helpers.typing import ConfigType       # Type hint: the full parsed config dict
 
@@ -182,9 +183,23 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
     # hass.data is a dict that integrations use to store their runtime state.
     # Using DOMAIN as the key prevents collisions with other integrations.
-    # This allows other parts of the integration (if we add sensors later)
-    # to find the coordinator via hass.data[DOMAIN].
+    # sensor.py retrieves the coordinator from hass.data[DOMAIN] when the
+    # sensor platform loads — it must be stored here before the platform loads.
     hass.data[DOMAIN] = coordinator
+
+    # -----------------------------------------------------------------------
+    # SENSOR PLATFORM — load sensor.py so HA entities become visible
+    # -----------------------------------------------------------------------
+    # async_load_platform tells HA to import and run async_setup_platform()
+    # from our sensor.py file.  The empty dict is the "discovery_info" passed
+    # to that function — we don't need to send anything extra because sensor.py
+    # reads the coordinator via hass.data[DOMAIN].
+    #
+    # This must be awaited AFTER hass.data[DOMAIN] = coordinator above, or
+    # sensor.py won't find the coordinator when it runs.
+    hass.async_create_task(
+        async_load_platform(hass, "sensor", DOMAIN, {}, config)
+    )
 
     # -----------------------------------------------------------------------
     # INITIAL REPORT — send one report as soon as HA finishes starting up

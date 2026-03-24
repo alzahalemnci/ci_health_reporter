@@ -1,0 +1,246 @@
+# ci_health_dashboard.yaml — CI Health Reporter Lovelace Dashboard
+# =================================================================
+#
+# INSTALLATION
+# ------------
+# 1. Copy this file to your HA config root (same folder as configuration.yaml)
+#
+# 2. Add the following block to configuration.yaml:
+#
+#      lovelace:
+#        dashboards:
+#          ci-health:
+#            mode: yaml
+#            filename: ci_health_dashboard.yaml
+#            title: Service Overview
+#            icon: mdi:heart-pulse
+#            show_in_sidebar: true
+#
+# 3. Restart Home Assistant.
+#    A new "Service Overview" item will appear in the left sidebar.
+#
+# DATA SOURCE
+# -----------
+# All cards read from four sensor entities created by the ci_health_reporter
+# integration. The entities are available after the first coordinator update
+# (typically within 10–60 seconds of HA starting).
+#
+#   sensor.ci_health_low_battery_count    — count of low-battery devices
+#   sensor.ci_health_offline_count        — count of offline entities
+#   sensor.ci_health_disabled_automations — count of disabled automations
+#   sensor.ci_health_system_health        — 0–100 health score
+#
+# No HACS or third-party cards are required.
+
+title: Smart Home — Service Overview
+views:
+  - title: Overview
+    path: ci-health-overview
+    icon: mdi:heart-pulse
+    badges: []
+    cards:
+
+      # -----------------------------------------------------------------------
+      # ROW 1 — KPI Summary Cards
+      # Four tiles in a horizontal row giving the at-a-glance status.
+      # The gauge needle turns red/yellow/green based on the score thresholds.
+      # -----------------------------------------------------------------------
+      - type: horizontal-stack
+        cards:
+
+          - type: entity
+            entity: sensor.ci_health_low_battery_count
+            name: Low Battery
+            icon: mdi:battery-alert
+            state_color: true
+
+          - type: entity
+            entity: sensor.ci_health_offline_count
+            name: Offline Devices
+            icon: mdi:wifi-off
+            state_color: true
+
+          - type: entity
+            entity: sensor.ci_health_disabled_automations
+            name: Disabled Automations
+            icon: mdi:robot-off
+            state_color: true
+
+          - type: gauge
+            entity: sensor.ci_health_system_health
+            name: System Health
+            min: 0
+            max: 100
+            needle: true
+            severity:
+              green: 75
+              yellow: 50
+              red: 0
+
+      # -----------------------------------------------------------------------
+      # ROW 2 — Active Issues Panel
+      #
+      # Jinja2 template reads the attributes of each sensor and renders a
+      # combined list of all current issues with emoji badges.
+      # Displays "no issues" when everything is healthy.
+      # -----------------------------------------------------------------------
+      - type: markdown
+        title: Active Issues
+        content: >
+          {% set batt   = states.sensor.ci_health_low_battery_count %}
+          {% set offl   = states.sensor.ci_health_offline_count %}
+          {% set auto   = states.sensor.ci_health_disabled_automations %}
+          {% set found  = namespace(any=false) %}
+
+          {% if batt.attributes.batteries is defined %}
+            {% for b in batt.attributes.batteries if b.low %}
+              {% set found.any = true %}
+              🔴 **{{ b.friendly_name }}** — battery at {{ b.level | int }}%
+              &nbsp;&nbsp;`Battery`
+
+            {% endfor %}
+          {% endif %}
+
+          {% if offl.attributes.offline_entities is defined %}
+            {% for e in offl.attributes.offline_entities %}
+              {% set found.any = true %}
+              🟡 **{{ e.friendly_name }}** — {{ e.state }}
+              &nbsp;&nbsp;`Offline`
+
+            {% endfor %}
+          {% endif %}
+
+          {% if auto.attributes.disabled_automations is defined %}
+            {% for a in auto.attributes.disabled_automations %}
+              {% set found.any = true %}
+              🔵 **{{ a.friendly_name }}** — disabled
+              &nbsp;&nbsp;`Automation`
+
+            {% endfor %}
+          {% endif %}
+
+          {% if not found.any %}
+          ✅ &nbsp;**No active issues — system is healthy.**
+          {% endif %}
+
+      # -----------------------------------------------------------------------
+      # ROW 3 — 30-Day Health History
+      #
+      # Shows how the system health score has changed over the past 30 days.
+      # Requires sensor.ci_health_system_health to have state_class=measurement
+      # (set in sensor.py) so HA stores long-term statistics.
+      # -----------------------------------------------------------------------
+      - type: history-graph
+        title: System Health Score — Last 30 Days
+        entities:
+          - entity: sensor.ci_health_system_health
+            name: Health Score
+        hours_to_show: 720
+        refresh_interval: 0
+
+      # -----------------------------------------------------------------------
+      # ROW 4 — Battery Levels by Device
+      #
+      # Renders a visual "bar" for each battery device using Unicode block
+      # characters divided into 10 segments. Colour-coded by level:
+      #   🟢 > 50%   🟡 20–50%   🔴 ≤ 20%
+      #
+      # Reads from sensor.ci_health_low_battery_count's "batteries" attribute
+      # which contains ALL battery devices (not just low ones).
+      # -----------------------------------------------------------------------
+      - type: markdown
+        title: Battery Levels by Device
+        content: >
+          {% set batt = states.sensor.ci_health_low_battery_count %}
+          {% if batt.attributes.batteries is defined and batt.attributes.batteries | length > 0 %}
+            {% for b in batt.attributes.batteries | sort(attribute='level') %}
+              {% set lvl = b.level | int %}
+              {% if lvl > 50 %}{% set dot = "🟢" %}
+              {% elif lvl > 20 %}{% set dot = "🟡" %}
+              {% else %}{% set dot = "🔴" %}
+              {% endif %}
+              {% set filled = (lvl / 10) | int %}
+              {% set bar = '█' * filled + '░' * (10 - filled) %}
+              {{ dot }} **{{ b.friendly_name }}** `{{ bar }}` {{ lvl }}%
+
+            {% endfor %}
+          {% else %}
+          *No battery devices found. Ensure the integration has run at least once.*
+          {% endif %}
+
+      # -----------------------------------------------------------------------
+      # ROW 5 — Maintenance Suggestions
+      #
+      # Generates up to 5 actionable suggestions from sensor attribute data.
+      # Rules evaluated in priority order:
+      #   1. Critical health score (< 50)
+      #   2. Low battery devices
+      #   3. Offline devices
+      #   4. Disabled automations
+      #   5. All-clear (when no other rules fire)
+      #
+      # Footer shows last update time and HA version for quick reference.
+      # -----------------------------------------------------------------------
+      - type: markdown
+        title: Maintenance Suggestions
+        content: >
+          {% set h        = states.sensor.ci_health_system_health %}
+          {% set score    = h.state | int(0) %}
+          {% set low_n    = h.attributes.low_battery_count    | default(0) | int %}
+          {% set off_n    = h.attributes.offline_count        | default(0) | int %}
+          {% set dis_n    = h.attributes.automations_disabled | default(0) | int %}
+          {% set off_names = h.attributes.offline_entity_names    | default([]) %}
+          {% set dis_names = h.attributes.disabled_automation_names | default([]) %}
+          {% set s = namespace(items=[], n=0) %}
+
+          {# Rule 1: Critical health score #}
+          {% if score < 50 and s.n < 5 %}
+            {% set s.items = s.items + ["⚠️ **System health is critical (" ~ score ~ "%).** Review all issues immediately."] %}
+            {% set s.n = s.n + 1 %}
+          {% endif %}
+
+          {# Rule 2: Low battery devices #}
+          {% if low_n >= 3 and s.n < 5 %}
+            {% set s.items = s.items + ["🔋 **" ~ low_n ~ " devices have low batteries.** Replace or recharge to prevent offline sensors."] %}
+            {% set s.n = s.n + 1 %}
+          {% elif low_n > 0 and s.n < 5 %}
+            {% set s.items = s.items + ["🔋 **" ~ low_n ~ " device(s) with low battery.** Check and replace soon."] %}
+            {% set s.n = s.n + 1 %}
+          {% endif %}
+
+          {# Rule 3: Offline devices — list names if only a few #}
+          {% if off_n >= 5 and s.n < 5 %}
+            {% set s.items = s.items + ["📡 **" ~ off_n ~ " devices offline.** Check your Zigbee/Z-Wave mesh, hub connectivity, or power supply."] %}
+            {% set s.n = s.n + 1 %}
+          {% elif off_n > 0 and s.n < 5 %}
+            {% set name_str = off_names[:3] | join(", ") %}
+            {% if off_n > 3 %}{% set name_str = name_str ~ " and " ~ (off_n - 3) ~ " more" %}{% endif %}
+            {% set s.items = s.items + ["📡 **Offline:** " ~ name_str ~ ". Investigate connectivity or power."] %}
+            {% set s.n = s.n + 1 %}
+          {% endif %}
+
+          {# Rule 4: Disabled automations — list names if only a few #}
+          {% if dis_n >= 3 and s.n < 5 %}
+            {% set s.items = s.items + ["🤖 **" ~ dis_n ~ " automations disabled.** Review Settings → Automations to re-enable intentional ones."] %}
+            {% set s.n = s.n + 1 %}
+          {% elif dis_n > 0 and s.n < 5 %}
+            {% set name_str = dis_names[:3] | join(", ") %}
+            {% if dis_n > 3 %}{% set name_str = name_str ~ " and " ~ (dis_n - 3) ~ " more" %}{% endif %}
+            {% set s.items = s.items + ["🤖 **Disabled automations:** " ~ name_str ~ ". Verify this is intentional."] %}
+            {% set s.n = s.n + 1 %}
+          {% endif %}
+
+          {# Rule 5: All clear #}
+          {% if s.n == 0 %}
+            {% set s.items = s.items + ["✅ **No maintenance required.** All systems are healthy."] %}
+          {% endif %}
+
+          {% for i in range(s.items | length) %}
+          **{{ i + 1 }}.** {{ s.items[i] }}
+
+          {% endfor %}
+
+          ---
+          *Last report: {{ h.attributes.last_updated | default("—") }}*
+          &nbsp;·&nbsp;
+          *HA {{ h.attributes.ha_version | default("unknown") }}*

@@ -91,3 +91,27 @@ HTTP_TIMEOUT_SECONDS = 10
 # If the server is slow or unreachable, we don't want the integration to hang
 # indefinitely — a 10-second timeout is generous for a LAN request.
 # aiohttp.ClientTimeout uses this value in coordinator.py.
+
+
+# ---------------------------------------------------------------------------
+# HEALTH SCORE PENALTIES
+# ---------------------------------------------------------------------------
+# The system health score starts at 100 and loses points for each problem.
+# Each category has a per-item penalty AND a cap so that one bad category
+# can never alone zero out the score — severity is distributed.
+#
+# Formula (in coordinator.py):
+#   score = 100
+#         - min(low_battery_count  * HEALTH_PENALTY_BATTERY_PER_ITEM,  HEALTH_PENALTY_BATTERY_MAX)
+#         - min(offline_count      * HEALTH_PENALTY_OFFLINE_PER_ITEM,  HEALTH_PENALTY_OFFLINE_MAX)
+#         - min(disabled_count     * HEALTH_PENALTY_DISABLED_PER_ITEM, HEALTH_PENALTY_DISABLED_MAX)
+#   score = max(0, min(100, score))
+
+HEALTH_PENALTY_BATTERY_PER_ITEM  = 5   # -5 pts per low-battery device
+HEALTH_PENALTY_BATTERY_MAX       = 30  # batteries can cost at most 30 pts
+
+HEALTH_PENALTY_OFFLINE_PER_ITEM  = 3   # -3 pts per offline entity
+HEALTH_PENALTY_OFFLINE_MAX       = 30  # offline can cost at most 30 pts
+
+HEALTH_PENALTY_DISABLED_PER_ITEM = 2   # -2 pts per disabled automation
+HEALTH_PENALTY_DISABLED_MAX      = 20  # disabled automations cost at most 20 pts
