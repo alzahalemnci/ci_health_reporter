@@ -126,10 +126,15 @@ class HealthReporterCoordinator:
         # the aiohttp session, and other HA subsystems.
         self.hass = hass
 
-        # Build the full POST URL once here instead of rebuilding it on every
-        # update. String concatenation is cheap but there's no need to repeat it.
-        # Result example: "http://192.168.1.189:8765/health"
-        self._url = f"{server_url}:{server_port}{HEALTH_ENDPOINT_PATH}"
+        # Build the full POST URL once here instead of rebuilding it on every update.
+        # If server_port is None (cloud/HTTPS deployment), omit the port entirely.
+        # Result examples:
+        #   local:  "http://192.168.1.189:8765/health"
+        #   cloud:  "https://xyz.execute-api.us-east-1.amazonaws.com/Prod/health"
+        if server_port is not None:
+            self._url = f"{server_url}:{server_port}{HEALTH_ENDPOINT_PATH}"
+        else:
+            self._url = f"{server_url}{HEALTH_ENDPOINT_PATH}"
 
         # Store the threshold so _gather_batteries() can use it without
         # needing it passed as an argument every call.

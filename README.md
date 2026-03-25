@@ -3,7 +3,7 @@
 A Home Assistant custom integration that periodically gathers health data from your HA instance — battery levels, offline entities, and automation states — and makes it available in two ways:
 
 1. **Live HA dashboard** — a built-in Lovelace "Service Overview" sidebar panel with KPI cards, active issues, health history graph, battery levels chart, and maintenance suggestions
-2. **HTTP push** — JSON payloads posted to an HTTP server on your network for external dashboards, alerting, or data storage
+2. **HTTP push** — JSON payloads posted to any HTTP or HTTPS endpoint of your choice — a local server on your network, or a remote cloud backend
 
 ![Deployed dashboard](ha_service_dashboard_deployed.jpg)
 
@@ -100,7 +100,7 @@ Every report interval a JSON payload is also POSTed to your configured server.
 
 - Home Assistant (any recent version — tested against 2024.x)
 - Python 3.11+ (bundled with Home Assistant)
-- Network access between the HA host and your reporting server (for HTTP push)
+- An HTTP or HTTPS endpoint to receive reports (local server or remote — see `cloud/` for a ready-to-deploy AWS serverless backend)
 
 ---
 
@@ -137,6 +137,7 @@ scp ci_health_dashboard.yaml homeassistant@<HA_IP>:/config/
 
 Add the following block:
 
+**Local server:**
 ```yaml
 ci_health_reporter:
   server_url: "http://192.168.1.189"   # IP of your reporting server
@@ -144,12 +145,19 @@ ci_health_reporter:
   interval: 60                          # seconds between reports (minimum: 10)
 ```
 
+**Remote/cloud endpoint (HTTPS):**
+```yaml
+ci_health_reporter:
+  server_url: "https://your-endpoint.example.com/Prod"
+  interval: 60
+```
+
 All fields except `server_url` are optional:
 
 | Key | Default | Description |
 |---|---|---|
-| `server_url` | *(required)* | Full URL including scheme, e.g. `http://192.168.1.189` |
-| `server_port` | `8765` | Port the HTTP server is listening on |
+| `server_url` | *(required)* | Full URL including scheme — `http://` for local, `https://` for remote |
+| `server_port` | *(none)* | Port to append to the URL. Omit for HTTPS cloud endpoints (port 443 is standard) |
 | `interval` | `60` | Seconds between reports (min: 10) |
 
 ### Step 3 — Set up the Lovelace dashboard
@@ -248,8 +256,14 @@ ci_health_reporter/
 │       ├── const.py           # Constants, defaults, health penalty values
 │       ├── sensor.py          # HA sensor entities (push-based, no polling)
 │       └── manifest.json      # HA integration metadata
+├── cloud/
+│   ├── template.yaml          # SAM template (API Gateway + Lambda + S3)
+│   ├── samconfig.toml         # SAM deployment config (region, stack name)
+│   ├── lambda/
+│   │   └── handler.py         # Lambda function — store payload, return 200
+│   └── README.md              # Cloud deployment instructions
 ├── mock_server/
-│   └── server.py              # Test server (BaseHTTPRequestHandler)
+│   └── server.py              # Local test server (BaseHTTPRequestHandler)
 ├── ci_health_dashboard.yaml   # Lovelace dashboard (copy to HA config root)
 ├── ha_service_dashboard.jpg   # Dashboard mockup
 ├── ha_service_dashboard_deployed.jpg  # Deployed screenshot

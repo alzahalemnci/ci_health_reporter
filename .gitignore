@@ -1,0 +1,10 @@
+# SAM build artifacts
+cloud/.aws-sam/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Environment
+.env

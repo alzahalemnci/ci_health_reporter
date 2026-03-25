@@ -64,10 +64,10 @@ DEFAULT_INTERVAL = 60
 # In production you might raise this to 300 (5 min) to reduce CPU load on
 # a Raspberry Pi. The minimum enforced by the schema is 10 seconds.
 
-DEFAULT_SERVER_PORT = 8765
-# The port our mock server (and any real server) should listen on.
-# 8765 is an arbitrary high-numbered port — it's unlikely to conflict
-# with other services. Common alternatives: 8080, 8000, 9000.
+DEFAULT_SERVER_PORT = None
+# None means no port is appended to the URL — used for cloud deployments
+# (API Gateway uses standard HTTPS port 443, so no port is needed).
+# For local use with the mock server, set this to 8765 in configuration.yaml.
 
 DEFAULT_LOW_BATTERY_THRESHOLD = 20
 # Batteries at or below this percentage are flagged as "low" in the payload.

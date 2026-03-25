@@ -112,7 +112,7 @@ CONFIG_SCHEMA = vol.Schema(
         DOMAIN: vol.Schema(
             {
                 vol.Required(CONF_SERVER_URL): cv.url,
-                vol.Optional(CONF_SERVER_PORT, default=DEFAULT_SERVER_PORT): cv.port,
+                vol.Optional(CONF_SERVER_PORT, default=DEFAULT_SERVER_PORT): vol.Any(None, cv.port),
                 vol.Optional(CONF_INTERVAL, default=DEFAULT_INTERVAL): vol.All(
                     cv.positive_int, vol.Range(min=10)
                 ),

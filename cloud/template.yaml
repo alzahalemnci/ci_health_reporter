@@ -1,0 +1,47 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+
+Description: CI Health Reporter - Cloud Backend (Phase 1)
+
+Globals:
+  Function:
+    Timeout: 10
+    Runtime: python3.12
+
+Resources:
+
+  # ── S3 Bucket ──────────────────────────────────────────────────────────────
+  # Stores every incoming health report as a JSON file.
+  # BucketName uses the AWS Account ID to guarantee global uniqueness.
+  HealthBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub 'ci-health-reports-${AWS::AccountId}'
+
+  # ── Lambda Function ────────────────────────────────────────────────────────
+  # Receives POST /health, writes payload to S3, returns 200 OK.
+  # SAM automatically creates the API Gateway and wires it to this function.
+  HealthFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: lambda/
+      Handler: handler.lambda_handler
+      Environment:
+        Variables:
+          BUCKET_NAME: !Ref HealthBucket
+      Policies:
+        - S3WritePolicy:
+            BucketName: !Ref HealthBucket
+      Events:
+        HealthPost:
+          Type: Api
+          Properties:
+            Path: /health
+            Method: post
+
+# ── Outputs ────────────────────────────────────────────────────────────────
+# Printed after deployment — this is the URL you put in configuration.yaml
+Outputs:
+  HealthApiUrl:
+    Description: "Paste this URL into HA configuration.yaml as server_url"
+    Value: !Sub 'https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod'
